@@ -287,7 +287,6 @@
                         "EVENTHUB_NAME": "[parameters('EVENTHUB_NAME')]",
                         "EventHubConnection__fullyQualifiedNamespace": "[parameters('EventHubConnection__fullyQualifiedNamespace')]",
                         "WEBSITE_RUN_FROM_PACKAGE": "https://github.com/brunofreitas-br/PurviewDLPLogsToADX/blob/main/O365MgmtToEventHub.zip?raw=true",
-                        "customLogName": "[parameters('customLogName')]",
 						"AzureAADLoginUri":"[variables('AzureAADLoginUri')]",
 						"OfficeLoginUri":"[variables('OfficeLoginUri')]",
 						"Schedule":"[parameters('FunctionSchedule')]"
