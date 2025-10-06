@@ -1,0 +1,17 @@
+{
+  "bindings": [
+    {
+      "name": "Timer",
+      "type": "timerTrigger",
+      "direction": "in",
+      "schedule": "%Schedule%"
+    },
+    {
+      "type": "eventHub",
+      "name": "outEh",
+      "direction": "out",
+      "eventHubName": "%EVENTHUB_NAME%",
+      "connection": "EventHubConnection"
+    }
+  ]
+}
