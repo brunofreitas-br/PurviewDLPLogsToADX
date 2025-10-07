@@ -1,0 +1,112 @@
+.create-or-alter function with (
+  folder = 'PurviewDLP/Parsers',
+  docstring = 'Parseia alertas de SharePoint DLP (RecordType 11). 1 linha por SIT. Inclui Reason/Justification (ExceptionInfo), IsOverride, AccessScope, GenerateAlertCutTime e DetectedValues.'
+)
+PurviewDLPLogs_Sharepoint()
+{
+  PurviewDLPLogs
+  | extend Raw = todynamic(Event)
+  | where tostring(Raw.Workload) == 'SharePoint'
+  | extend
+      IngestTime          = ingestion_time(),
+      CreationTime        = todatetime(Raw.CreationTime),
+      Workload            = tostring(Raw.Workload),
+      Operation           = tostring(Raw.Operation),
+      RecordType          = toint(Raw.RecordType),
+      OrganizationId      = tostring(Raw.OrganizationId),
+      IncidentId          = tostring(Raw.IncidentId),
+      Id                  = tostring(Raw.Id),
+      UserId              = tostring(Raw.UserId),
+      UserKey             = tostring(Raw.UserKey),
+      ObjectId            = tostring(Raw.ObjectId),
+      EvaluationSource    = tostring(Raw.EvaluationSource),
+      SP                  = todynamic(Raw.SharePointMetaData),
+      Exc                 = todynamic(Raw.ExceptionInfo),
+      PolicyArr           = todynamic(Raw.PolicyDetails)
+  | extend Policy   = iff(isnull(PolicyArr) or array_length(PolicyArr)==0, dynamic(null), PolicyArr[0])
+  | extend RulesArr = iff(isnull(Policy) or isnull(Policy.Rules) or array_length(Policy.Rules)==0, dynamic([]), Policy.Rules)
+  | extend Rule     = iff(array_length(RulesArr)==0, dynamic(null), RulesArr[0])
+  | extend
+      SP_FileID                 = tostring(SP.FileID),
+      SP_FileName               = tostring(SP.FileName),
+      SP_FileOwner              = tostring(SP.FileOwner),
+      SP_FilePathUrl            = tostring(SP.FilePathUrl),
+      SP_FileSize               = tolong(SP.FileSize),
+      SP_From                   = tostring(SP.From),
+      SP_IsViewableByExternal   = tobool(strcat("", SP.IsViewableByExternalUsers)),
+      SP_IsVisibleOnlyToOdbOwner= tobool(strcat("", SP.IsVisibleOnlyToOdbOwner)),
+      SP_ItemCreationTime       = todatetime(SP.ItemCreationTime),
+      SP_ItemLastModifiedTime   = todatetime(SP.ItemLastModifiedTime),
+      SP_ItemLastSharedTime     = todatetime(SP.ItemLastSharedTime),
+      SP_SensitivityLabelIds    = SP.SensitivityLabelIds,
+      SP_SensitivityLabelNames  = SP.SensitivityLabelNames,
+      SP_SharedBy               = SP.SharedBy,
+      SP_SiteAdmin              = SP.SiteAdmin,
+      SP_SiteCollectionGuid     = tostring(SP.SiteCollectionGuid),
+      SP_SiteCollectionUrl      = tostring(SP.SiteCollectionUrl),
+      SP_UniqueID               = tostring(SP.UniqueID)
+  | extend
+      PolicyId            = tostring(Policy.PolicyId),
+      PolicyName          = tostring(Policy.PolicyName),
+      PolicyVersion       = tostring(Policy.PolicyVersion),
+      RuleId              = tostring(Rule.RuleId),
+      RuleName            = tostring(Rule.RuleName),
+      RuleMode            = tostring(Rule.RuleMode),
+      RuleVersion         = tostring(Rule.RuleVersion),
+      Severity            = tostring(Rule.Severity),
+      Actions             = todynamic(Rule.Actions),
+      ActionParameters    = todynamic(Rule.ActionParameters),
+      OverriddenActions   = todynamic(Rule.OverriddenActions),
+      Conditions          = todynamic(Rule.ConditionsMatched),
+      AlertProperties     = todynamic(Rule.AlertProperties),
+      Exc_Reason          = tostring(Exc.Reason),
+      Exc_Justification   = tostring(Exc.Justification),
+      Exc_Rules           = iff(isnull(Exc) or isnull(Exc.Rules), dynamic([]), Exc.Rules)
+  | extend OtherConds = todynamic(Conditions.OtherConditions)
+  | mv-apply oc = OtherConds on (
+      extend ocName = tostring(oc.Name), ocVal = tostring(oc.Value)
+      | summarize AccessScope = anyif(ocVal, ocName == "AccessScope")
+    )
+  | mv-apply ap = AlertProperties on (
+      extend apName = tostring(ap.Name), apVal = tostring(ap.Value)
+      | summarize GenerateAlertCutTime_s = anyif(apVal, apName == "GenerateAlertCutTime")
+    )
+  | extend GenerateAlertCutTime = todatetime(GenerateAlertCutTime_s)
+  | extend SITs = todynamic(Conditions.SensitiveInformation)
+  | extend SITs = iff(isnull(SITs) or array_length(SITs)==0, dynamic([{}]), SITs)
+  | mv-expand SIT = SITs to typeof(dynamic)
+  | extend
+      SIT_Name           = tostring(SIT.SensitiveInformationTypeName),
+      SIT_Id             = tostring(SIT.SensitiveType),
+      SIT_ClassifierType = tostring(SIT.ClassifierType),
+      SIT_Confidence     = toint(SIT.Confidence),
+      SIT_Count          = toint(SIT.Count),
+      SIT_DetailAttrs    = todynamic(SIT.SensitiveInformationDetailedClassificationAttributes)
+  | extend SIT_DetailAttrs = iff(isnull(SIT_DetailAttrs), dynamic([]), SIT_DetailAttrs)
+  | mv-apply a = SIT_DetailAttrs on (
+      summarize SIT_MatchAny   = any(tobool(strcat("", a.IsMatch))),
+                SIT_MatchCount = sum( toint(tobool(strcat("", a.IsMatch))) )
+    )
+  | extend SIT_Detections = todynamic(SIT.SensitiveInformationDetections)
+  | extend SIT_DetectedValues = iff(isnull(SIT_Detections) or isnull(SIT_Detections.DetectedValues), dynamic([]), SIT_Detections.DetectedValues)
+  | extend SIT_ResultsTruncated = tobool(strcat("", iif(isnull(SIT_Detections) or isnull(SIT_Detections.ResultsTruncated), false, SIT_Detections.ResultsTruncated)))
+  | mv-apply dv = SIT_DetectedValues on (
+      extend dvName = tostring(dv.Name), dvVal = tostring(dv.Value)
+      | summarize SIT_DetectedNames   = make_set(dvName, 256),
+                  SIT_DetectedSamples = make_set(dvVal, 10)
+    )
+  | extend IsOverride = iif(Operation =~ "DLPRuleUndo" or strlen(Exc_Reason) > 0 or strlen(Exc_Justification) > 0, true, false)
+  | project
+      IngestTime, CreationTime, Workload, Operation, RecordType,
+      OrganizationId, IncidentId, Id, UserId, UserKey, ObjectId, EvaluationSource,
+      SP_FileID, SP_FileName, SP_FileOwner, SP_FilePathUrl, SP_FileSize,
+      SP_From, SP_IsViewableByExternal, SP_IsVisibleOnlyToOdbOwner,
+      SP_ItemCreationTime, SP_ItemLastModifiedTime, SP_ItemLastSharedTime,
+      SP_SensitivityLabelIds, SP_SensitivityLabelNames, SP_SharedBy, SP_SiteAdmin,
+      SP_SiteCollectionGuid, SP_SiteCollectionUrl, SP_UniqueID,
+      PolicyId, PolicyName, PolicyVersion, RuleId, RuleName, RuleMode, RuleVersion, Severity,
+      Actions, ActionParameters, OverriddenActions, AccessScope, GenerateAlertCutTime,
+      Exc_Reason, Exc_Justification, Exc_Rules, IsOverride,
+      SIT_Name, SIT_Id, SIT_ClassifierType, SIT_Confidence, SIT_Count,
+      SIT_MatchAny, SIT_MatchCount, SIT_ResultsTruncated, SIT_DetectedNames, SIT_DetectedSamples
+}

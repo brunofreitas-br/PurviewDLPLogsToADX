@@ -1,0 +1,113 @@
+.create-or-alter function with (
+  folder   = 'PurviewDLP/Parsers',
+  docstring= 'Parseia alertas de Exchange Online DLP (RecordType 13). 1 linha por SIT. Inclui Reason/Justification (ExceptionInfo), IsOverride, AccessScope, GenerateAlertCutTime e DetectedValues.'
+)
+PurviewDLPLogs_Exchange()
+{
+  PurviewDLPLogs
+  | extend Raw = todynamic(Event)
+  | where tostring(Raw.Workload) == 'Exchange' or toint(Raw.RecordType) == 13
+  | extend
+      IngestTime       = ingestion_time(),
+      CreationTime     = todatetime(Raw.CreationTime),
+      Workload         = tostring(Raw.Workload),
+      Operation        = tostring(Raw.Operation),
+      RecordType       = toint(Raw.RecordType),
+      OrganizationId   = tostring(Raw.OrganizationId),
+      IncidentId       = tostring(Raw.IncidentId),
+      Id               = tostring(Raw.Id),
+      UserId           = tostring(Raw.UserId),
+      UserKey          = tostring(Raw.UserKey),
+      ObjectId         = tostring(Raw.ObjectId),
+      UserType         = toint(Raw.UserType),
+      EXO              = todynamic(Raw.ExchangeMetaData),
+      Exc              = todynamic(Raw.ExceptionInfo),
+      PolicyArr        = todynamic(Raw.PolicyDetails)
+  | extend Policy   = iff(isnull(PolicyArr) or array_length(PolicyArr)==0, dynamic(null), PolicyArr[0])
+  | extend RulesArr = iff(isnull(Policy) or isnull(Policy.Rules) or array_length(Policy.Rules)==0, dynamic([]), Policy.Rules)
+  | extend Rule     = iff(array_length(RulesArr)==0, dynamic(null), RulesArr[0])
+  | extend
+      EXO_From                 = tostring(EXO.From),
+      EXO_To                   = EXO.To,           // array
+      EXO_CC                   = EXO.CC,           // array
+      EXO_BCC                  = EXO.BCC,          // array
+      EXO_Subject              = tostring(EXO.Subject),
+      EXO_MessageID            = tostring(EXO.MessageID),
+      EXO_FileSize             = tolong(EXO.FileSize),
+      EXO_RecipientCount       = toint(EXO.RecipientCount),
+      EXO_Sent                 = todatetime(EXO.Sent),
+      EXO_IsViewableByExternal = tobool(strcat("", EXO.IsViewableByExternalUsers)),
+      EXO_SensitivityLabelIds  = EXO.SensitivityLabelIds,
+      EXO_SensitivityLabelNames= EXO.SensitivityLabelNames,
+      EXO_UniqueID             = tostring(EXO.UniqueID)
+  | extend
+      PolicyId          = tostring(Policy.PolicyId),
+      PolicyName        = tostring(Policy.PolicyName),
+      PolicyVersion     = tostring(Policy.PolicyVersion),
+      RuleId            = tostring(Rule.RuleId),
+      RuleName          = tostring(Rule.RuleName),
+      RuleMode          = tostring(Rule.RuleMode),
+      RuleVersion       = tostring(Rule.RuleVersion),
+      Severity          = tostring(Rule.Severity),
+      Actions           = todynamic(Rule.Actions),
+      ActionParameters  = todynamic(Rule.ActionParameters),
+      OverriddenActions = todynamic(Rule.OverriddenActions),
+      Conditions        = todynamic(Rule.ConditionsMatched),
+      AlertProperties   = todynamic(Rule.AlertProperties),
+      Exc_Reason        = tostring(Exc.Reason),
+      Exc_Justification = tostring(Exc.Justification),
+      Exc_FalsePositive = tobool(strcat("", Exc.FalsePositive)),
+      Exc_Rules         = iff(isnull(Exc) or isnull(Exc.Rules), dynamic([]), Exc.Rules)
+  | extend OtherConds = todynamic(Conditions.OtherConditions)
+  | mv-apply oc = OtherConds on (
+      extend ocName = tostring(oc.Name), ocVal = tostring(oc.Value)
+      | summarize AccessScope = anyif(ocVal, ocName == "AccessScope")
+    )
+  | mv-apply ap = AlertProperties on (
+      extend apName = tostring(ap.Name), apVal = tostring(ap.Value)
+      | summarize GenerateAlertCutTime_s = anyif(apVal, apName == "GenerateAlertCutTime")
+    )
+  | extend GenerateAlertCutTime = todatetime(GenerateAlertCutTime_s)
+  | extend SITs = todynamic(Conditions.SensitiveInformation)
+  | extend SITs = iff(isnull(SITs) or array_length(SITs)==0, dynamic([{}]), SITs)
+  | mv-expand SIT = SITs to typeof(dynamic)
+  | extend
+      SIT_Name           = tostring(SIT.SensitiveInformationTypeName),
+      SIT_Id             = tostring(SIT.SensitiveType),
+      SIT_ClassifierType = tostring(SIT.ClassifierType),
+      SIT_Confidence     = toint(SIT.Confidence),
+      SIT_Count          = toint(SIT.Count),
+      SIT_UniqueCount    = toint(SIT.UniqueCount),
+      SIT_Location       = tostring(SIT.Location),
+      SIT_DetailAttrs    = todynamic(SIT.SensitiveInformationDetailedClassificationAttributes)
+  | extend SIT_DetailAttrs = iff(isnull(SIT_DetailAttrs), dynamic([]), SIT_DetailAttrs)
+  | mv-apply a = SIT_DetailAttrs on (
+      summarize SIT_MatchAny   = any(tobool(strcat("", a.IsMatch))),
+                SIT_MatchCount = sum( toint(tobool(strcat("", a.IsMatch))) )
+    )
+  | extend SIT_Detections = todynamic(SIT.SensitiveInformationDetections)
+  | extend SIT_DetectedValues = iff(
+      isnull(SIT_Detections) or isnull(SIT_Detections.DetectedValues),
+      dynamic([]),
+      SIT_Detections.DetectedValues
+    )
+  | extend SIT_ResultsTruncated = tobool(
+      strcat("", iif(isnull(SIT_Detections) or isnull(SIT_Detections.ResultsTruncated), false, SIT_Detections.ResultsTruncated))
+    )
+  | mv-apply dv = SIT_DetectedValues on (
+      extend dvName = tostring(dv.Name), dvVal = tostring(dv.Value)
+      | summarize SIT_DetectedNames   = make_set(dvName, 256),
+                  SIT_DetectedSamples = make_set(dvVal, 10)
+    )
+  | extend IsOverride = iif(Operation =~ "DLPRuleUndo" or strlen(Exc_Reason) > 0 or strlen(Exc_Justification) > 0 or array_length(Exc_Rules) > 0, true, false)
+  | project
+      IngestTime, CreationTime, Workload, Operation, RecordType,
+      OrganizationId, IncidentId, Id, UserId, UserKey, ObjectId, UserType,
+      EXO_From, EXO_To, EXO_CC, EXO_BCC, EXO_Subject, EXO_MessageID, EXO_FileSize, EXO_RecipientCount,
+      EXO_Sent, EXO_IsViewableByExternal, EXO_SensitivityLabelIds, EXO_SensitivityLabelNames, EXO_UniqueID,
+      PolicyId, PolicyName, PolicyVersion, RuleId, RuleName, RuleMode, RuleVersion, Severity,
+      Actions, ActionParameters, OverriddenActions, AccessScope, GenerateAlertCutTime,
+      Exc_Reason, Exc_Justification, Exc_FalsePositive, Exc_Rules, IsOverride,
+      SIT_Name, SIT_Id, SIT_ClassifierType, SIT_Confidence, SIT_Count, SIT_UniqueCount, SIT_Location,
+      SIT_MatchAny, SIT_MatchCount, SIT_ResultsTruncated, SIT_DetectedNames, SIT_DetectedSamples
+}

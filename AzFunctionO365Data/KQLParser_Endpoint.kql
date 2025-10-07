@@ -1,0 +1,102 @@
+.create-or-alter function with (
+  folder = 'PurviewDLP/Parsers',
+  docstring = 'Parseia alertas de Endpoint DLP (RecordType 108) da PurviewDLPLogs; 1 linha por SensitiveInfoType (ou 1 por evento se não houver). Extrai Justification de EndpointMetaData/ExceptionInfo/ActionParameters/AlertProperties.'
+)
+PurviewDLPLogs_Endpoint()
+{
+  PurviewDLPLogs
+  | extend Raw = todynamic(Event)
+  | where tostring(Raw.Workload) == 'Endpoint' or toint(Raw.RecordType) == 108
+  | extend
+      IngestTime          = ingestion_time(),
+      CreationTime        = todatetime(Raw.CreationTime),
+      Workload            = tostring(Raw.Workload),
+      Operation           = tostring(Raw.Operation),
+      RecordType          = toint(Raw.RecordType),
+      OrganizationId      = tostring(Raw.OrganizationId),
+      IncidentId          = tostring(Raw.IncidentId),
+      ObjectId            = tostring(Raw.ObjectId),
+      UserId              = tostring(Raw.UserId),
+      ClientIP            = tostring(Raw.ClientIP),
+      EvidenceFile        = tostring(Raw.EvidenceFile),
+      CorrelationIdentity = tostring(Raw.CorrelationIdentity),
+      Endpoint            = Raw.EndpointMetaData,
+      PolicyArr           = todynamic(Raw.PolicyDetails)
+  | extend Policy   = iff(isnull(PolicyArr) or array_length(PolicyArr)==0, dynamic(null), PolicyArr[0])
+  | extend RulesArr = iff(isnull(Policy) or isnull(Policy.Rules) or array_length(Policy.Rules)==0, dynamic([]), Policy.Rules)
+  | extend Rule     = iff(array_length(RulesArr)==0, dynamic(null), RulesArr[0])
+  | extend
+      DeviceName         = tostring(Endpoint.DeviceName),
+      Platform           = toint(Endpoint.Platform),
+      Application        = tostring(Endpoint.Application),
+      EndpointOperation  = tostring(Endpoint.EndpointOperation),
+      EnforcementMode    = toint(Endpoint.EnforcementMode),
+      FileType           = tostring(Endpoint.FileType),
+      FileExtension      = tostring(Endpoint.FileExtension),
+      FileSize           = tolong(Endpoint.FileSize),
+      PreviousFileName   = tostring(Endpoint.PreviousFileName),
+      TargetFilePath     = tostring(Endpoint.TargetFilePath),
+      TargetUrl          = tostring(Endpoint.TargetUrl),
+      MDATPDeviceId      = tostring(Endpoint.MDATPDeviceId),
+      Sha1               = tostring(Endpoint.Sha1),
+      Sha256             = tostring(Endpoint.Sha256),
+      SensitivityLabelId  = tostring(Endpoint.SensitivityLabelEventData.SensitivityLabelId),
+      SensitivityLabelIds = Endpoint.SensitivityLabelIds,
+      SITs               = todynamic(Endpoint.SensitiveInfoTypeData),
+      ActionParameters   = todynamic(Rule.ActionParameters),
+      AlertProperties    = todynamic(Rule.AlertProperties)
+  | extend Exc_raw  = Raw.ExceptionInfo,
+           Exc_ep   = Endpoint.ExceptionInfo,
+           Exc_rule = Rule.ExceptionInfo
+  | extend ExceptionInfo = coalesce(Exc_ep, Exc_raw, Exc_rule)
+  | mv-apply ap = ActionParameters on (
+      extend ap_s = tostring(ap), ap_v = tostring(ap.Value)
+      | extend ap_just = coalesce(ap_v, extract(@"(?i)Justification(?:Text)?\s*[:=]\s*([^\]|;,\}]+)", 1, ap_s))
+      | summarize JustFromAP = anyif(ap_just, strlen(ap_just)>0)
+    )
+  | mv-apply al = AlertProperties on (
+      extend al_s = tostring(al), al_v = tostring(al.Value)
+      | extend al_just = coalesce(al_v, extract(@"(?i)Justification(?:Text)?\s*[:=]\s*([^\]|;,\}]+)", 1, al_s))
+      | summarize JustFromAlert = anyif(al_just, strlen(al_just)>0)
+    )
+  | extend
+      JustificationRaw = coalesce(
+                           tostring(Endpoint.Justification),
+                           tostring(ExceptionInfo.Justification),
+                           tostring(ExceptionInfo.JustificationText),
+                           JustFromAP,
+                           JustFromAlert
+                         ),
+      ExceptionInfo_FalsePositive = tobool(strcat("", ExceptionInfo.FalsePositive)),
+      ExceptionInfo_Reason        = tostring(ExceptionInfo.Reason)
+  | extend
+      JustificationTemplate = iif(isnull(JustificationRaw) or JustificationRaw !has ":", tostring(JustificationRaw),
+                                  trim(@" ", extract(@"^\s*([^:]+?)\s*:", 1, JustificationRaw))),
+      JustificationMessage  = iif(isnull(JustificationRaw) or JustificationRaw !has ":", tostring(JustificationRaw),
+                                  trim(@" ", extract(@"^[^:]*:\s*(.*)$", 1, JustificationRaw)))
+  | extend SITs = iff(isnull(SITs) or array_length(SITs)==0, dynamic([{}]), SITs)
+  | mv-expand SIT = SITs to typeof(dynamic)
+  | extend
+      SensitiveInfoTypeId      = tostring(SIT.SensitiveInfoTypeId),
+      SensitiveInfoTypeName    = tostring(SIT.SensitiveInfoTypeName),
+      SensitiveInfoCount       = toint(SIT.Count),
+      SensitiveInfoConfidence  = toint(SIT.Confidence)
+  | extend
+      PolicyId          = tostring(Policy.PolicyId),
+      PolicyName        = tostring(Policy.PolicyName),
+      RuleId            = tostring(Rule.RuleId),
+      RuleName          = tostring(Rule.RuleName),
+      RuleMode          = tostring(Rule.RuleMode),
+      Severity          = tostring(Rule.Severity),
+      OverriddenActions = Rule.OverriddenActions
+  | project
+      IngestTime, CreationTime, Workload, Operation, RecordType,
+      OrganizationId, IncidentId, ObjectId, UserId, ClientIP, EvidenceFile, CorrelationIdentity,
+      DeviceName, Platform, Application, EndpointOperation, EnforcementMode,
+      FileType, FileExtension, FileSize, PreviousFileName, TargetFilePath, TargetUrl,
+      MDATPDeviceId, Sha1, Sha256, SensitivityLabelId, SensitivityLabelIds,
+      PolicyId, PolicyName, RuleId, RuleName, RuleMode, Severity, OverriddenActions,
+      ExceptionInfo_FalsePositive, ExceptionInfo_Reason,
+      JustificationRaw, JustificationTemplate, JustificationMessage,
+      SensitiveInfoTypeId, SensitiveInfoTypeName, SensitiveInfoCount, SensitiveInfoConfidence
+}
