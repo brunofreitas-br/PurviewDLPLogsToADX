@@ -279,7 +279,7 @@
                         "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING": "[concat('DefaultEndpointsProtocol=https;AccountName=', toLower(variables('StorageAccountName')),';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('StorageAccountName')), '2019-06-01').keys[0].value, ';EndpointSuffix=',toLower(variables('StorageSuffix')))]",
                         "WEBSITE_CONTENTSHARE": "[variables('FunctionName')]",
                         "clientID": "[parameters('clientID')]",
-                        "clientSecret": "[concat('@Microsoft.KeyVault(SecretUri=', reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('KeyVaultName'), variables('AzureAADClientSecret')), '2019-09-01').properties.secretUriWithVersion, ')')]",
+                        "clientSecret": "[concat('@Microsoft.KeyVault(SecretUri=', reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('KeyVaultName'), variables('AzureAADClientSecret')), '2016-10-01').secretUriWithVersion, ')')]",
                         "domain": "[parameters('domain')]",
                         "tenantGuid": "[subscription().tenantId]",
                         "publisher": "[parameters('publisher')]",
