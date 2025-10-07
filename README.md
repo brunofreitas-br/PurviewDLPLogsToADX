@@ -127,11 +127,12 @@ Open ADX (Kusto) query window (target database):
   PurviewDLP_Raw
   | take 5
   ```
-- **Parsers:** import the `.kql` files from `/kql/` and then:
+- **Parsers:** import the `.kql` files from `/KQL Parsers/` and then:
   ```kusto
-  PurviewDLP_Endpoint(PurviewDLP_Raw)   | take 5
-  PurviewDLP_SharePoint(PurviewDLP_Raw) | take 5
-  PurviewDLP_OneDrive(PurviewDLP_Raw)   | take 5
+  PurviewDLPLogs_Endpoint()   | take 5
+  PurviewDLPLogs_SharePoint() | take 5
+  PurviewDLPLogs_OneDrive()   | take 5
+  PurviewDLPLogs_Exchange()   | take 5
   ```
 
 ---
