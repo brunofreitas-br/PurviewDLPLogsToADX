@@ -98,10 +98,10 @@ Open ADX (Kusto) query window (target database):
 
 ```kusto
 // Raw table with a single dynamic column that stores the full event JSON
-.create table PurviewDLP_Raw (Event: dynamic);
+.create table PurviewDLPLogs (Event: dynamic);
 
 // Ingestion mapping: capture whole payload into Event
-.create-or-alter table PurviewDLP_Raw ingestion json mapping 'RawJson'
+.create-or-alter table PurviewDLPLogs ingestion json mapping 'RawJson'
 '[{"column":"Event","datatype":"dynamic","path":"$"}]'
 ```
 
@@ -124,7 +124,7 @@ Open ADX (Kusto) query window (target database):
 - **Event Hubs metrics:** check Ingress/Egress on the Event Hub (namespace → event hub → Metrics)
 - **ADX raw data:**
   ```kusto
-  PurviewDLP_Raw
+  PurviewDLPLogs
   | take 5
   ```
 - **Parsers:** import the `.kql` files from `/KQL Parsers/` and then:
