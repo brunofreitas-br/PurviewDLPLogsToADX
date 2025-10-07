@@ -276,7 +276,7 @@
                         "AzureWebJobsStorage": "[concat('DefaultEndpointsProtocol=https;AccountName=', toLower(variables('StorageAccountName')),';AccountKey=',listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('StorageAccountName')), '2019-06-01').keys[0].value, ';EndpointSuffix=',toLower(variables('StorageSuffix')))]",						
                         "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING": "[concat('DefaultEndpointsProtocol=https;AccountName=', toLower(variables('StorageAccountName')),';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('StorageAccountName')), '2019-06-01').keys[0].value, ';EndpointSuffix=',toLower(variables('StorageSuffix')))]",
                         "WEBSITE_CONTENTSHARE": "[variables('FunctionName')]",
-                        "clientID": "[parameters('clientSecret')]",
+                        "clientID": "[parameters('clientID')]",
                         "clientSecret": "[concat('@Microsoft.KeyVault(SecretUri=', reference(variables('AzureAADClientSecret')).secretUriWithVersion, ')')]",
                         "domain": "[parameters('domain')]",
                         "tenantGuid": "[subscription().tenantId]",
