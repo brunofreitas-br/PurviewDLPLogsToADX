@@ -39,7 +39,7 @@
         },
         "contentTypes": {
             "type": "string",
-			"defaultValue": "Audit.General,DLP.ALL",
+			"defaultValue": "DLP.ALL",
 			"metadata": {
 				"description": "Ex:Audit.General,DLP.ALL"
 			}            
